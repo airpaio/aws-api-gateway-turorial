@@ -48,7 +48,7 @@ Resources:
                 required: true
                 type: "string"
               responses:
-                200:
+                '200':
                   description: "200 response"
                   schema:
                     $ref: "#/definitions/Empty"
@@ -178,7 +178,7 @@ Resources:
         Value:
           Ref: LambdaFunctionName
   
-  lambdaApiGatewayInvoke:
+  LambdaApiGatewayInvoke:
     Type: "AWS::Lambda::Permission"
     Properties:
       Action: "lambda:InvokeFunction"
