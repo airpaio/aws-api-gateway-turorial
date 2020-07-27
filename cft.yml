@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: AWS Lambda Function with API Gateway integration to start or stop EC2s
+
+Parameters:
+  LambdaFunctionName:
+    Type: String
+    Description: Enter the name of the lambda function
+    AllowedPattern: "^[-0-9a-zA-Z].+$"
+    Default: start-stop-EC2s
+
+Resources:
+
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      ApiKeySourceType: HEADER
+      Description: An API Gateway with a Lambda Integration to start or stop EC2s via POST requests to this API.
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: start-stop-ec2s
+      Body:
+        swagger: "2.0"
+        info:
+          description: "StartSporEC2sAPIGTest"
+          version: "2020-07-27T15:58:25Z"
+          title: "StartSporEC2sAPIGTest"
+        basePath: "/v0"
+        schemes:
+        - "https"
+        paths:
+          /start-stop-ec2s:
+            post:
+              produces:
+              - "application/json"
+              parameters:
+              - name: "instanceId"
+                in: "query"
+                required: true
+                type: "string"
+              - name: "action"
+                in: "query"
+                required: true
+                type: "string"
+              - name: "region"
+                in: "query"
+                required: true
+                type: "string"
+              responses:
+                200:
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              security:
+              - api_key: []
+              x-amazon-apigateway-integration:
+                uri: !Join 
+                  - ':'
+                  - - 'arn:aws:apigateway'
+                    - !Ref 'AWS::Region'
+                    - 'lambda:path/2015-03-31/functions/arn:aws:lambda'
+                    - !Ref 'AWS::Region'
+                    - !Ref 'AWS::AccountId'
+                    - function
+                    - !Join 
+                      - ''
+                      - - !Ref LambdaFunction
+                        - /invocations
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+        securityDefinitions:
+          api_key:
+            type: "apiKey"
+            name: "x-api-key"
+            in: "header"
+        definitions:
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+
+  ApiGatewayModel:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      ContentType: 'application/json'
+      RestApiId: !Ref ApiGatewayRestApi
+      Schema: {}
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiGatewayDeployment
+      Description: Start or Stop EC2s API Stage v0
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: 'v0'
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: Start or Stop EC2s API Deployment
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StartStopEC2APIServiceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: 'Allow'
+            Principal:
+              Service:
+                - 'apigateway.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: StartStopEC2APILambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action: 'lambda:InvokeFunction'
+                Resource: !GetAtt LambdaFunction.Arn
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+
+
+          def lambda_handler(event, context):
+              '''
+              lambda_handler takes query parameter input from an API Gateway event,
+              and starts or stops an EC2 with region and instanceId and action query 
+              parameters.
+              '''
+              region = event["queryStringParameters"]["region"]
+              instanceId = [event["queryStringParameters"]["instanceId"]]
+              action = event["queryStringParameters"]["action"]
+              ec2 = boto3.client('ec2', region_name=region)
+              
+              if action == 'start':
+                  ec2.start_instances(InstanceIds=instanceId)
+                  return {
+                      'statusCode': 200,
+                      'body': 'EC2 ' + instanceId[0] + ' in region ' + region + ' is starting.'
+              }
+              elif action == 'stop':
+                  ec2.stop_instances(InstanceIds=instanceId)
+                  return {
+                      'statusCode': 200,
+                      'body': 'EC2 ' + instanceId[0] + ' in region ' + region + ' is stopping.'
+              }
+              else:
+                  return {
+                      'statusCode': 200,
+                      'body': 'Invalid action ' + action + '. Nothing to do.'
+              }
+      Description: AWS Lambda function
+      FunctionName: 
+        Ref: LambdaFunctionName
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Role: !GetAtt LambdaIamRole.Arn
+      Runtime: python3.7
+      Timeout: 30
+      Tags:
+      - Key: Name
+        Value:
+          Ref: LambdaFunctionName
+  
+  lambdaApiGatewayInvoke:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt "LambdaFunction.Arn"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/start-stop-ec2s"
+
+  LambdaIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'start_stop_ec2s'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  LambdaIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: StartStopEC2s
+      Roles:
+        - Ref: LambdaIamRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ''
+          Effect: Allow
+          Action:
+          - ec2:StartInstances
+          - ec2:StopInstances
+          Resource: 
+          - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+        - Sid: CloudWatchLogging
+          Effect: Allow
+          Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource:
+            - !Sub  'arn:aws:logs:*:*:log-group:/aws/lambda/${LambdaFunctionName}:*:*'
+  
+  LambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaFunctionName}"
+      RetentionInDays: 90
